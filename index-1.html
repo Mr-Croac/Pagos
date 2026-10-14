@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pagos</title>
+<style>
+:root{--bg:#F1F5F8;--sf:#fff;--ink:#14213D;--mu:#5B6778;--ln:#D8DFE6;--ac:#0F766E;--ai:#fff;--er:#B42318;--pn:#14213D;--pi:#EAF2F8;--ps:#9FB3C8;--pos:#2DD4BF;--neg:#F5B24D;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0C1520;--sf:#152131;--ink:#E6EDF5;--mu:#93A1B3;--ln:#26344A;--ac:#2DD4BF;--ai:#06201C;--er:#FDA29B;--pn:#0A111B;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:2rem;margin:8px 0 2px;letter-spacing:-.02em}h2{font-size:1.1rem;margin:0 0 12px}
+section{background:var(--sf);border:1px solid var(--ln);border-radius:14px;padding:16px;margin-bottom:14px}
+input,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--ln);border-radius:10px;padding:10px 12px;min-height:44px;margin-bottom:8px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:10px 16px;min-height:44px;cursor:pointer;background:var(--ac);color:var(--ai)}
+button.ghost{background:transparent;color:var(--mu);border:1px solid var(--ln)}
+button.x{background:transparent;color:var(--mu);padding:0 10px;min-height:36px}
+.row{display:flex;gap:8px}.row input{margin:0}
+.chip{display:inline-block;background:var(--bg);border:1px solid var(--ln);border-radius:999px;padding:2px 14px;margin:0 6px 6px 0}
+.part{display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--ln)}.part input{width:20px;height:20px;margin:0}
+.err{color:var(--er);min-height:1.4em;margin:4px 0}.mu{color:var(--mu)}
+.panel{background:var(--pn);color:var(--pi);border-color:transparent}
+.pay{display:flex;gap:8px;align-items:baseline;padding:10px 0;border-top:1px solid #ffffff22}.pay:first-child{border-top:0}
+.pay span{margin-left:auto;font-weight:800;font-size:1.3rem;color:var(--pos)}
+.bal{display:flex;justify-content:space-between;padding:4px 0;color:var(--ps)}.pos{color:var(--pos)}.neg{color:var(--neg)}
+.exp{display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--ln)}.exp:first-child{border-top:0}
+.exp div{flex:1;min-width:0}.exp small{display:block;color:var(--mu)}
+</style>
+</head>
+<body>
+<main>
+<div id="home">
+  <h1>Pagos</h1>
+  <p class="mu">Divide gastos con tu grupo. Todos ven las mismas cuentas desde su móvil.</p>
+  <section><h2>Crear grupo</h2>
+    <input id="gname" placeholder="Nombre (por ejemplo, Viaje a Lisboa)" maxlength="40">
+    <button id="create">Crear grupo</button></section>
+  <section><h2>Entrar con un código</h2>
+    <input id="gcode" placeholder="Código de 6 caracteres" maxlength="6" autocapitalize="characters">
+    <button id="join">Entrar</button></section>
+  <p class="err" id="herr" role="alert"></p>
+</div>
+
+<div id="group" hidden>
+  <button class="ghost" id="back">Salir del grupo</button>
+  <h1 id="title"></h1>
+  <p class="mu">Código para invitar: <b id="gc"></b> <button class="ghost" id="copy">Copiar enlace</button></p>
+  <section><h2>Personas</h2><div id="chips"></div>
+    <div class="row"><input id="pn" placeholder="Nombre" maxlength="24"><button id="addp">Añadir</button></div>
+    <p class="err" id="perr" role="alert"></p></section>
+  <section><h2>Nuevo gasto</h2>
+    <input id="desc" placeholder="¿Qué se pagó?" maxlength="60">
+    <input id="amt" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Importe">
+    <select id="payer" aria-label="Quién pagó"></select>
+    <div id="parts"></div>
+    <p class="err" id="xerr" role="alert"></p>
+    <button id="addx">Guardar gasto</button></section>
+  <section class="panel"><h2>Quién paga a quién</h2><div id="pays"></div><div id="bals" style="margin-top:10px"></div></section>
+  <section><h2>Gastos</h2><div id="list"></div></section>
+</div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=c=>(c/100).toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2});
+let code='',data=null,last='',off=new Set(),timer=null;
+
+async function api(path,opt={}){
+  const r=await fetch('/api'+path,{method:opt.method||'GET',headers:{'Content-Type':'application/json'},body:opt.body?JSON.stringify(opt.body):undefined});
+  const j=r.status===204?{}:await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(j.error||'Error del servidor');e.status=r.status;throw e}
+  return j;
+}
+function render(){
+  const d=data,nm=id=>esc((d.people.find(p=>p.id===id)||{}).name||'?');
+  $('#title').textContent=d.group.name;$('#gc').textContent=d.group.code;
+  $('#chips').innerHTML=d.people.map(p=>`<span class="chip">${esc(p.name)}</span>`).join('')||'<span class="mu">Añade al menos dos personas.</span>';
+  const cur=$('#payer').value;
+  $('#payer').innerHTML=d.people.map(p=>`<option value="${p.id}" ${String(p.id)===cur?'selected':''}>${esc(p.name)}</option>`).join('');
+  $('#parts').innerHTML=d.people.map(p=>`<label class="part"><input type="checkbox" value="${p.id}" ${off.has(p.id)?'':'checked'}>${esc(p.name)}</label>`).join('');
+  $('#pays').innerHTML=d.transfers.length?d.transfers.map(t=>`<div class="pay"><b>${nm(t.from)}</b> paga a <b>${nm(t.to)}</b><span>${fmt(t.amount_cents)}</span></div>`).join(''):`<p style="color:var(--ps);margin:0">${d.expenses.length?'Todo saldado.':'Cuando guardes gastos, aquí verás los pagos.'}</p>`;
+  $('#bals').innerHTML=d.people.map(p=>{const v=d.balances[p.id]||0;return `<div class="bal"><span>${esc(p.name)}</span><span class="${v>0?'pos':v<0?'neg':''}">${v>0?'le deben ':v<0?'debe ':''}${fmt(Math.abs(v))}</span></div>`}).join('');
+  $('#list').innerHTML=d.expenses.map(e=>`<div class="exp"><div><b>${esc(e.description)}</b><small>Pagó ${nm(e.payer_id)}, entre ${e.shares.map(s=>nm(s.person_id)).join(', ')}</small></div><b>${fmt(e.amount_cents)}</b><button class="x" data-rm="${e.id}" aria-label="Borrar gasto">×</button></div>`).join('')||'<p class="mu" style="margin:0">Aún no hay gastos.</p>';
+}
+async function load(){
+  try{
+    const j=await api('/groups/'+code),t=JSON.stringify(j);
+    if(t===last)return;
+    last=t;data=j;render();
+  }catch(e){if(e.status===404)leave('Ese grupo no existe.')}
+}
+function enter(c){
+  code=c;location.hash=c;last='';off=new Set();
+  $('#home').hidden=true;$('#group').hidden=false;
+  load();clearInterval(timer);timer=setInterval(load,5000);
+}
+function leave(msg=''){
+  clearInterval(timer);code='';history.replaceState(null,'',location.pathname);
+  $('#group').hidden=true;$('#home').hidden=false;$('#herr').textContent=msg;
+}
+$('#create').onclick=async()=>{try{const r=await api('/groups',{method:'POST',body:{name:$('#gname').value}});enter(r.code)}catch(e){$('#herr').textContent=e.message}};
+$('#join').onclick=async()=>{const c=$('#gcode').value.trim().toUpperCase();try{await api('/groups/'+c);enter(c)}catch(e){$('#herr').textContent=e.message}};
+$('#back').onclick=()=>leave();
+$('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(location.href);$('#copy').textContent='Copiado'}catch(e){$('#copy').textContent='Copia la dirección del navegador'}};
+$('#addp').onclick=async()=>{try{await api(`/groups/${code}/people`,{method:'POST',body:{name:$('#pn').value}});$('#pn').value='';$('#perr').textContent='';last='';await load()}catch(e){$('#perr').textContent=e.message}};
+$('#parts').onchange=e=>{const id=+e.target.value;e.target.checked?off.delete(id):off.add(id)};
+$('#addx').onclick=async()=>{
+  const amt=Math.round(parseFloat(($('#amt').value||'').replace(',','.'))*100);
+  const ids=[...$('#parts').querySelectorAll('input:checked')].map(i=>+i.value);
+  try{
+    await api(`/groups/${code}/expenses`,{method:'POST',body:{description:$('#desc').value,amount_cents:amt,payer_id:+$('#payer').value,participants:ids}});
+    $('#desc').value='';$('#amt').value='';$('#xerr').textContent='';last='';await load();
+  }catch(e){$('#xerr').textContent=e.message}
+};
+$('#list').onclick=async e=>{const id=e.target.dataset.rm;if(id){await api(`/groups/${code}/expenses/${id}`,{method:'DELETE'});last='';load()}};
+if(location.hash.length>1)enter(location.hash.slice(1).toUpperCase());
+</script>
+</body>
+</html>
